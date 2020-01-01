@@ -68,6 +68,16 @@ class NotEnoughAttributes(Exception):
         self.attributes_num = attributes_num
 
 
+class NotEnoughSpaces(Exception):
+    def __init__(self, msg_len, spaces_num):
+        super().__init__(
+            "Not enough specified single spaces in html file to encode message msg len: {}, number of spaces: {}"
+            .format(msg_len, spaces_num)
+        )
+        self.msg_len = msg_len
+        self.spaces_num = spaces_num
+
+
 class SingleEndingSpace:
     @staticmethod
     def add_ending_lines_spaces(msg, dict_text):
@@ -164,15 +174,70 @@ class AttributesTypos:
         return decoded_msg
 
 
+class DoubleSpace:
+    @staticmethod
+    def add_double_spaces(msg, dict_text):
+        dict_with_spaces_positions = AttributesTypos.find_all_attributes_spans(dict_text, ' ')
+        spaces_keys = [key for key in dict_with_spaces_positions.keys()]
+        result_dict = dict_text.copy()
+        k = 0
+        i = 0
+        span_shift = 0
+        for bit in msg:
+            next_key = spaces_keys[k]
+            if bit == '1':
+                matching_span = dict_with_spaces_positions[next_key][i][0]
+                result_dict[next_key] = result_dict[next_key][:matching_span + span_shift] + ' ' + result_dict[next_key][matching_span + span_shift:]
+                span_shift += 1
+            if i == len(dict_with_spaces_positions[next_key]) - 1:
+                i = 0
+                k += 1
+                span_shift = 0
+            else:
+                i += 1
+        return result_dict
+
+    @staticmethod
+    def decode_double_spaces(watermark_dict):
+        decoded_msg = ''
+        for key in watermark_dict.keys():
+            bits = []
+            spans = []
+            one = re.findall('  ', watermark_dict[key])
+            zero = re.findall(' ', watermark_dict[key])
+            if one:
+                iterator = re.finditer('  ', watermark_dict[key])
+                for match in iterator:
+                    bits.append([match.span()[0], '1'])
+                    spans.append(match.span()[0])
+            if zero:
+                iterator = re.finditer(' ', watermark_dict[key])
+                for match in iterator:
+                    m = match.span()[0]
+                    if m not in spans and m - 1 not in spans and m + 1 not in spans:
+                        bits.append([match.span()[0], '0'])
+            bits = AttributesTypos.sort_attr_list(bits)
+            for match in bits:
+                decoded_msg += match[1]
+        return decoded_msg
+
+
 if __name__ == "__main__":
     if sys.argv[1] == '-e':
         message = Message.read_in_bytes_message_content("mess.txt")
+        print(message)
         d = HtmlFile.read_line_to_dict("cover.html")
         if sys.argv[2] == '-1':
             lines_num = HtmlFile.calculate_lines(d)
             if len(message) > lines_num:
                 raise NotEnoughLines(len(message), lines_num)
             encoded = SingleEndingSpace.add_ending_lines_spaces(message, d)
+            HtmlFile.write_lines_from_dict_to_html(encoded, "watermark.html")
+        elif sys.argv[2] == '-2':
+            spaces_number = HtmlFile.calculate_attributes(d, ' ')
+            if len(message) > spaces_number:
+                raise NotEnoughSpaces(len(message), spaces_number)
+            encoded = DoubleSpace.add_double_spaces(message, d)
             HtmlFile.write_lines_from_dict_to_html(encoded, "watermark.html")
         elif sys.argv[2] == '-3':
             attribute = 'style="margin-bottom: 0cm; line-height: 100%"'
@@ -197,6 +262,9 @@ if __name__ == "__main__":
         d = HtmlFile.read_line_to_dict("watermark.html")
         if sys.argv[2] == '-1':
             decoded = SingleEndingSpace.decode_ending_lines_spaces(d)
+            Message.write_in_hex_detect_message(decoded, "detected.txt")
+        elif sys.argv[2] == '-2':
+            decoded = DoubleSpace.decode_double_spaces(d)
             Message.write_in_hex_detect_message(decoded, "detected.txt")
         elif sys.argv[2] == '-3':
             attribute_one = 'style="margin-bottom: 0cm; lineheight: 100%"'
